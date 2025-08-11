@@ -9,10 +9,10 @@ require("dotenv").config();
 
 const THAWANI_API_KEY = process.env.THAWANI_API_KEY; 
 const THAWANI_API_URL = process.env.THAWANI_API_URL;
-const publish_key = "dSUzzUhfbpjumRIkHPDelGGPNwmp50";
+const publish_key = "HGvTMLDssJghr9tlN9gr4DVYt0qyBy";
 
 const app = express();
-app.use(cors({ origin: "https://www.henna-burgund.shop" }));
+app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json());
 
 // Create checkout session
@@ -49,8 +49,8 @@ router.post("/create-checkout-session", async (req, res) => {
             client_reference_id: nowId,
             mode: "payment",
             products: lineItems,
-            success_url: "https://www.henna-burgund.shop/SuccessRedirect?client_reference_id=" + nowId,
-            cancel_url: "https://www.henna-burgund.shop/cancel",
+            success_url: "http://localhost:5173/SuccessRedirect?client_reference_id=" + nowId,
+            cancel_url: "http://localhost:5173/cancel",
             metadata: {
                 customer_name: customerName,
                 customer_phone: customerPhone,
@@ -71,7 +71,7 @@ router.post("/create-checkout-session", async (req, res) => {
         });
 
         const sessionId = response.data.data.session_id;
-        const paymentLink = `https://checkout.thawani.om/pay/${sessionId}?key=${publish_key}`;
+        const paymentLink = `https://uatcheckout.thawani.om/pay/${sessionId}?key=${publish_key}`;
 
         const order = new Order({
             orderId: sessionId,
