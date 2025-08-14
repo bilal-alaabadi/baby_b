@@ -20,7 +20,7 @@ const OrderSchema = new mongoose.Schema(
     wilayat: { type: String, required: true },
     description: { type: String },
     email: { type: String, required: true },
-    status:{ type: String, required: true,enum: ['failed', 'completed',"pending"], default: 'pending' },
+    status:{ type: String, required: true, enum: ['failed', 'completed', 'pending'], default: 'pending' },
     currency: { type: String, required: true, enum: ['OMR', 'AED'], default: 'OMR' },
   },
   { timestamps: true }
