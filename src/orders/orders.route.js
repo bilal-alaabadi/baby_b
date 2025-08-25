@@ -9,7 +9,7 @@ require("dotenv").config();
 
 const THAWANI_API_KEY = process.env.THAWANI_API_KEY; 
 const THAWANI_API_URL = process.env.THAWANI_API_URL;
-const publish_key = "HGvTMLDssJghr9tlN9gr4DVYt0qyBy";
+const THAWANI_PUBLISH_KEY = process.env.THAWANI_PUBLISH_KEY;
 
 const app = express();
 app.use(cors({ origin: "https://www.alanthor.com" }));
@@ -71,7 +71,7 @@ router.post("/create-checkout-session", async (req, res) => {
     });
 
     const sessionId = response.data.data.session_id;
-    const paymentLink = `https://uatcheckout.thawani.om/pay/${sessionId}?key=${publish_key}`;
+    const paymentLink = `https://checkout.thawani.om/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
 
     const order = new Order({
       orderId: sessionId,
