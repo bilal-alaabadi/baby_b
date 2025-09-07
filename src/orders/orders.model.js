@@ -8,8 +8,8 @@ const OrderSchema = new mongoose.Schema(
         productId: { type: String, required: true },
         quantity: { type: Number, required: true },
         name: { type: String, required: true },
-        price:{ type: Number, required: true },
-        image:{ type: String, required: true },
+        price: { type: Number, required: true },
+        image: { type: String, required: true },
       },
     ],
     amount: { type: Number, required: true },
@@ -20,8 +20,13 @@ const OrderSchema = new mongoose.Schema(
     wilayat: { type: String, required: true },
     description: { type: String },
     email: { type: String, required: true },
-    status:{ type: String, required: true, enum: ['failed', 'completed', 'pending'], default: 'pending' },
-    currency: { type: String, required: true, enum: ['OMR', 'AED'], default: 'OMR' },
+    status: {
+      type: String,
+      required: true,
+      enum: ["failed", "completed", "pending"],
+      default: "pending",
+    },
+    currency: { type: String, required: true, enum: ["OMR", "AED"], default: "OMR" },
   },
   { timestamps: true }
 );
