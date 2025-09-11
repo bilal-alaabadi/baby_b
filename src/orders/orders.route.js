@@ -83,8 +83,8 @@ router.post("/create-checkout-session", async (req, res) => {
       mode: "payment",
       products: lineItems,
       success_url:
-        "http://localhost:5173/SuccessRedirect?client_reference_id=" + nowId,
-      cancel_url: "http://localhost:5173/cancel",
+        "https://www.baby7aven.com/SuccessRedirect?client_reference_id=" + nowId,
+      cancel_url: "https://www.baby7aven.com/cancel",
       metadata: {
         customer_name: customerName,
         customer_phone: customerPhone,
