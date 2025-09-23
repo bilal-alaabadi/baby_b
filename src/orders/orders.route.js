@@ -56,7 +56,7 @@ router.post("/create-checkout-session", async (req, res) => {
       0
     );
 
-    // ✅ حساب الشحن وفق القاعدة الجديدة
+    // ✅ حساب الشحن وفق القاعدة
     const shippingFee = computeShippingFee(subtotal);
     const totalAmount = subtotal + shippingFee;
 
@@ -83,8 +83,8 @@ router.post("/create-checkout-session", async (req, res) => {
       mode: "payment",
       products: lineItems,
       success_url:
-        "http://localhost:5173/SuccessRedirect?client_reference_id=" + nowId,
-      cancel_url: "http://localhost:5173/cancel",
+        "https://www.baby7aven.com/SuccessRedirect?client_reference_id=" + nowId,
+      cancel_url: "https://www.baby7aven.com/cancel",
       metadata: {
         customer_name: customerName,
         customer_phone: customerPhone,
@@ -111,7 +111,7 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const paymentLink = `${CHECKOUT_HOST}/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
 
-    // خزّن الطلب بحالة pending
+    // خزّن الطلب بحالة pending — ✅ مع حفظ اللون/المقاس/العدد المختارة
     const order = new Order({
       orderId: sessionId,
       products: products.map((p) => ({
@@ -120,6 +120,11 @@ router.post("/create-checkout-session", async (req, res) => {
         name: p.name,
         price: Number(p.price),
         image: Array.isArray(p.image) ? p.image[0] : p.image,
+
+        // السمات المختارة من الواجهة
+        chosenColor: p.chosenColor || p.color || "",
+        chosenSize: p.chosenSize || p.size || "",
+        chosenCount: p.chosenCount || p.count || "", // "العدد" كالنص الاختياري في المنتج
       })),
       amount: totalAmount,
       shippingFee, // ✅ يحفظ الرسوم المحسوبة
@@ -156,14 +161,15 @@ router.get("/order-with-products/:orderId", async (req, res) => {
         if (!product) return null;
         return {
           ...product.toObject(),
+
+          // الكميات/الاختيارات من الطلب:
           quantity: item.quantity,
-          selectedSize: item.selectedSize,
-          price:
-            product.category === "حناء بودر" &&
-            item.selectedSize &&
-            product.price[item.selectedSize]
-              ? (product.price[item.selectedSize] * item.quantity).toFixed(2)
-              : ((product.regularPrice || product.price) * item.quantity).toFixed(2),
+          chosenColor: item.chosenColor || "",
+          chosenSize: item.chosenSize || "",
+          chosenCount: item.chosenCount || "",
+
+          // السعر الإجمالي لهذا البند
+          lineTotal: (Number(item.price) * Number(item.quantity)).toFixed(2),
         };
       })
     );
@@ -234,7 +240,7 @@ router.post("/confirm-payment", async (req, res) => {
     let shouldDecrementStock = false;
 
     if (!order) {
-      // حالة نادرة: ننشئ طلبًا من الجلسة
+      // حالة نادرة: ننشئ طلبًا من الجلسة (لا نعرف chosenColor/Size/Count هنا)
       const shippingItem = (session.products || []).find((i) => i.name === "رسوم الشحن");
       const shippingFeeFromSession = shippingItem ? (Number(shippingItem.unit_amount || 0) / 1000) : 0;
 
@@ -243,11 +249,14 @@ router.post("/confirm-payment", async (req, res) => {
         products: (session.products || [])
           .filter((i) => i.name !== "رسوم الشحن")
           .map((item) => ({
-            productId: item.productId, // قد لا يتوفر من ثواني
+            productId: item.productId || "", // قد لا يتوفر من مزود الدفع
             quantity: Number(item.quantity),
             name: item.name,
             price: Number(item.unit_amount || 0) / 1000,
             image: "",
+            chosenColor: "",
+            chosenSize: "",
+            chosenCount: "",
           })),
         amount: Number(session.total_amount || 0) / 1000,
         shippingFee: shippingFeeFromSession,

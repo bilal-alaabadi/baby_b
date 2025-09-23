@@ -41,6 +41,7 @@ router.post("/uploadImages", async (req, res) => {
 });
 
 // ====================== إنشاء منتج ======================
+// ========================= backend/routes/products.route.js (create-product فقط) =========================
 router.post("/create-product", async (req, res) => {
   try {
     let {
@@ -53,6 +54,9 @@ router.post("/create-product", async (req, res) => {
       image,
       author,
       stock,
+      size,     // اختياري
+      count,    // اختياري (جديد)
+      colors,   // اختياري (قد تأتي مصفوفة أو نص)
     } = req.body;
 
     if (price !== undefined) price = Number(price);
@@ -64,6 +68,17 @@ router.post("/create-product", async (req, res) => {
     } else {
       stock = Math.floor(Number(stock));
     }
+
+    const normalizeColors = (val) => {
+      if (Array.isArray(val)) {
+        return val.map((c) => String(c || "").trim()).filter(Boolean);
+      }
+      return String(val || "")
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+    };
+    const colorsArr = normalizeColors(colors);
 
     if (!name || !mainCategory || !category || !description || price == null || !author) {
       return res.status(400).send({
@@ -96,6 +111,9 @@ router.post("/create-product", async (req, res) => {
       image: normalizedImages,
       author,
       stock,
+      size: String(size || "").trim() || undefined,   // اختياري
+      count: String(count || "").trim() || undefined, // اختياري
+      colors: colorsArr,                               // اختياري
     };
 
     const newProduct = new Products(productData);
@@ -107,38 +125,90 @@ router.post("/create-product", async (req, res) => {
   }
 });
 
+
 // ====================== كل المنتجات ======================
+// GET /api/products
 router.get("/", async (req, res) => {
   try {
-    const { category, size, color, minPrice, maxPrice, page = 1, limit = 10 } = req.query;
+    const {
+      mainCategory,   // ✅ جديد: الفئة الرئيسية
+      category,       // النوع/التصنيف الفرعي
+      size,
+      color,
+      minPrice,
+      maxPrice,
+      page = 1,
+      limit = 10,
+      sort = "createdAt:desc",
+    } = req.query;
+
+    // أداة مساعدة: هل القيمة تعني "الكل" / "غير محدد"؟
+    const isAll = (v) =>
+      v === undefined ||
+      v === null ||
+      String(v).trim() === "" ||
+      String(v).trim().toLowerCase() === "all" ||
+      String(v).trim() === "الكل";
 
     const filter = {};
-    if (category && category !== "all") {
-      filter.category = category;
-      if (category === "حناء بودر" && size) {
-        filter.size = size;
-      }
+
+    // ✅ فلترة الفئة الرئيسية
+    if (!isAll(mainCategory)) {
+      filter.mainCategory = String(mainCategory).trim();
     }
-    if (color && color !== "all") {
-      filter.color = color;
+
+    // ✅ فلترة النوع/التصنيف الفرعي
+    // - إذا category = الكل → لا نفلتر بها
+    // - إذا category محددة → نضيفها
+    if (!isAll(category)) {
+      filter.category = String(category).trim();
     }
-    if (minPrice && maxPrice) {
-      const min = parseFloat(minPrice);
-      const max = parseFloat(maxPrice);
-      if (!isNaN(min) && !isNaN(max)) {
-        filter.price = { $gte: min, $lte: max };
+
+    // ✅ فلترة المقاس (اختياري)
+    // ملاحظة: كان عندك شرط خاص "حناء بودر" — تقدر ترجع له لو تحتاج:
+    // if (!isAll(category) && category === "حناء بودر" && !isAll(size)) { filter.size = size; }
+    if (!isAll(size)) {
+      filter.size = String(size).trim();
+    }
+
+    // ✅ فلترة اللون: حقل الألوان لديك هو مصفوفة `colors`، فنستخدم $in
+    if (!isAll(color)) {
+      filter.colors = { $in: [String(color).trim()] };
+    }
+
+    // ✅ فلترة السعر
+    const priceMinNum = parseFloat(minPrice);
+    const priceMaxNum = parseFloat(maxPrice);
+    if (!Number.isNaN(priceMinNum) || !Number.isNaN(priceMaxNum)) {
+      filter.price = {};
+      if (!Number.isNaN(priceMinNum)) filter.price.$gte = priceMinNum;
+      if (!Number.isNaN(priceMaxNum)) filter.price.$lte = priceMaxNum;
+      // لو ما صار عندنا مفاتيح في السعر، نحذفه
+      if (Object.keys(filter.price).length === 0) delete filter.price;
+    }
+
+    // ✅ ترتيب (يدعم الصيغة: "createdAt:desc" / "price:asc" ...)
+    let sortSpec = { createdAt: -1 };
+    if (typeof sort === "string" && sort.includes(":")) {
+      const [key, dir] = sort.split(":");
+      if (key) {
+        sortSpec = { [key]: dir === "asc" ? 1 : -1 };
       }
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // ✅ صفحات
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 10);
+    const skip = (pageNum - 1) * limitNum;
+
     const totalProducts = await Products.countDocuments(filter);
-    const totalPages = Math.ceil(totalProducts / parseInt(limit));
+    const totalPages = Math.ceil(totalProducts / limitNum);
 
     const products = await Products.find(filter)
+      .sort(sortSpec)
       .skip(skip)
-      .limit(parseInt(limit))
-      .populate("author", "email")
-      .sort({ createdAt: -1 });
+      .limit(limitNum)
+      .populate("author", "email");
 
     res.status(200).send({ products, totalPages, totalProducts });
   } catch (error) {
@@ -146,6 +216,7 @@ router.get("/", async (req, res) => {
     res.status(500).send({ message: "Failed to fetch products" });
   }
 });
+
 
 // ====================== المنتجات المرتبطة (ضعه قبل /:id) ======================
 router.get("/related/:id", async (req, res) => {
@@ -194,135 +265,137 @@ router.get(["/product/:id", "/:id"], async (req, res) => {
 });
 
 // ====================== تحديث منتج ======================
-router.patch(
-  "/update-product/:id",
-  verifyToken,
-  verifyAdmin,
-  upload.none(), // نستقبل فورم-داتا بدون ملفات (حقول فقط)
-  async (req, res) => {
-    try {
-      const productId = req.params.id;
+router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) => {
+  try {
+    const productId = req.params.id;
 
-      let {
-        name,
-        mainCategory,
-        category,
-        price,
-        oldPrice,
-        description,
-        author,
-        stock, // ✅ دعم تحديث المخزون
-      } = req.body;
+    let {
+      name,
+      mainCategory,
+      category,
+      description,
+      price,
+      oldPrice,
+      image,     // ممكن تكون مصفوفة أو نص واحد أو غير موجودة نهائيًا
+      author,    // اختياري
+      stock,     // اختياري
+      size,      // اختياري
+      count,     // اختياري
+      colors,    // اختياري (مصفوفة أو نص "أحمر,أزرق")
+    } = req.body;
 
-      // تحويلات رقمية آمنة
-      const priceNum = price !== undefined ? Number(price) : undefined;
-      const oldPriceNum =
-        oldPrice !== undefined && oldPrice !== "" ? Number(oldPrice) : undefined;
-      const stockNum =
-        stock !== undefined && stock !== "" ? Math.floor(Number(stock)) : undefined;
+    // ====== تحويلات رقمية آمنة ======
+    const priceNum = price !== undefined ? Number(price) : undefined;
+    const oldPriceNum =
+      oldPrice !== undefined && oldPrice !== "" ? Number(oldPrice) : undefined;
+    const stockNum =
+      stock !== undefined && stock !== "" ? Math.floor(Number(stock)) : undefined;
 
-      // تحقق المدخلات المطلوبة (حسب واجهتك أنت ترسل كل الحقول)
-      if (
-        !name ||
-        !mainCategory ||
-        !category ||
-        priceNum == null ||
-        !description
-      ) {
-        return res.status(400).send({
-          message:
-            "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، السعر، الوصف)",
-        });
+    // ====== تطبيع الألوان ======
+    const normalizeColors = (val) => {
+      if (val === undefined) return undefined; // لم يُرسل الحقل: لا نلمسه
+      if (Array.isArray(val)) {
+        return val.map((c) => String(c || "").trim()).filter(Boolean);
       }
+      return String(val || "")
+        .split(",")
+        .map((c) => c.trim())
+        .filter(Boolean);
+    };
+    const colorsArr = normalizeColors(colors);
 
-      if (Number.isNaN(priceNum) || priceNum < 0) {
-        return res.status(400).send({ message: "السعر غير صالح" });
-      }
-      if (oldPriceNum !== undefined && (Number.isNaN(oldPriceNum) || oldPriceNum < 0)) {
-        return res.status(400).send({ message: "السعر القديم غير صالح" });
-      }
-      if (stockNum !== undefined && (Number.isNaN(stockNum) || stockNum < 0)) {
-        return res.status(400).send({ message: "قيمة المخزون (stock) غير صالحة" });
-      }
-
-      // تجهيز بيانات التحديث مع trim
-      const updateData = {
-        name: String(name).trim(),
-        mainCategory: String(mainCategory).trim(),
-        category: String(category).trim(),
-        price: priceNum,
-        description: String(description).trim(),
-      };
-
-      if (author) updateData.author = author;
-      if (oldPriceNum !== undefined) updateData.oldPrice = oldPriceNum; // فقط لو أُرسل فعلاً
-      if (stockNum !== undefined) updateData.stock = stockNum; // فقط لو أُرسل فعلاً
-
-      // ====== الصور (اختيارية) ======
-      // دعم ثلاث حالات:
-      // 1) image[] = [url1, url2, ...]
-      // 2) image = 'url' أو تكرر image عدة مرات (نحاول تجميعها يدويًا)
-      // 3) imageJson = '["url1","url2"]'
-      const imagesFieldArray = [];
-      const body = req.body;
-
-      // حالة image[] من فورم-داتا
-      if (Array.isArray(body["image[]"])) {
-        imagesFieldArray.push(...body["image[]"]);
-      }
-
-      // حالة تكرار image
-      if (Array.isArray(body.image)) {
-        imagesFieldArray.push(...body.image);
-      } else if (typeof body.image === "string" && body.image.trim() !== "") {
-        imagesFieldArray.push(body.image.trim());
-      }
-
-      // حالة JSON نصّي
-      if (typeof body.imageJson === "string" && body.imageJson.trim() !== "") {
-        try {
-          const parsed = JSON.parse(body.imageJson);
-          if (Array.isArray(parsed)) {
-            imagesFieldArray.push(...parsed.filter(Boolean));
-          }
-        } catch (_) {
-          // تجاهل JSON غير صالح
-        }
-      }
-
-      // إزالة التكرارات وفراغات
-      const normalizedImages = [...new Set(imagesFieldArray.map(String))].filter(
-        (u) => u && u.trim() !== ""
-      );
-
-      if (normalizedImages.length > 0) {
-        updateData.image = normalizedImages;
-      }
-      // إن لم تُرسل صور نهائيًا لا نضع image في $set حتى لا نمسح القديمة
-
-      const updatedProduct = await Products.findByIdAndUpdate(
-        productId,
-        { $set: updateData },
-        { new: true, runValidators: true }
-      );
-
-      if (!updatedProduct) {
-        return res.status(404).send({ message: "المنتج غير موجود" });
-      }
-
-      res.status(200).send({
-        message: "تم تحديث المنتج بنجاح",
-        product: updatedProduct,
-      });
-    } catch (error) {
-      console.error("خطأ في تحديث المنتج", error);
-      res.status(500).send({
-        message: "فشل تحديث المنتج",
-        error: error.message,
+    // ====== التحقق من الحقول المطلوبة (مثل create) ======
+    // واجهة التحديث عندك ترسل كل الحقول الأساسية، فنحافظ على نفس التحقق
+    if (
+      !name ||
+      !mainCategory ||
+      !category ||
+      priceNum == null || // يشمل undefined و null
+      !description
+    ) {
+      return res.status(400).send({
+        message:
+          "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، الوصف، السعر)",
       });
     }
+
+    // ====== فحوصات القيم الرقمية ======
+    if (Number.isNaN(priceNum) || priceNum < 0) {
+      return res.status(400).send({ message: "السعر غير صالح" });
+    }
+    if (oldPriceNum !== undefined && (Number.isNaN(oldPriceNum) || oldPriceNum < 0)) {
+      return res.status(400).send({ message: "السعر القديم غير صالح" });
+    }
+    if (stockNum !== undefined && (Number.isNaN(stockNum) || stockNum < 0)) {
+      return res.status(400).send({ message: "قيمة المخزون (stock) غير صالحة" });
+    }
+
+    // ====== تجهيز بيانات التحديث ======
+    const toTrimOrNull = (v) => {
+      if (v === undefined) return undefined; // لم يُرسل: لا نلمس
+      const s = String(v || "").trim();
+      return s || null; // لو فاضي نخزن null (يتماشى مع الـ schema)
+    };
+
+    const updateData = {
+      name: String(name).trim(),
+      mainCategory: String(mainCategory).trim(),
+      category: String(category).trim(),
+      description: String(description).trim(),
+      price: priceNum,
+    };
+
+    // الحقول الاختيارية — لا نضعها إلا لو أُرسلت
+    if (author !== undefined) updateData.author = author;
+    if (oldPriceNum !== undefined) updateData.oldPrice = oldPriceNum;
+    if (stockNum !== undefined) updateData.stock = stockNum;
+    if (size !== undefined) updateData.size = toTrimOrNull(size);
+    if (count !== undefined) updateData.count = toTrimOrNull(count);
+    if (colorsArr !== undefined) updateData.colors = colorsArr;
+
+    // ====== الصور ======
+    // ندعم:
+    // 1) image = ['url1','url2', ...]
+    // 2) image = 'url' (نحوّلها لمصفوفة)
+    // 3) عدم إرسال image => لا نلمس الصور
+    if (image !== undefined) {
+      let normalizedImages = [];
+      if (Array.isArray(image)) {
+        normalizedImages = image.map((u) => String(u || "").trim()).filter(Boolean);
+      } else if (typeof image === "string") {
+        const one = image.trim();
+        if (one) normalizedImages = [one];
+      }
+
+      // ملاحظة: في التحديث إذا وصلت مصفوفة فارغة، سنعتبرها رغبة في تفريغ الصور
+      // لكن لو تفضل الإبقاء على القديمة عند مصفوفة فارغة، احذف السطر التالي وضع شرط length>0
+      updateData.image = normalizedImages;
+    }
+
+    // تنفيذ التحديث
+    const updatedProduct = await Products.findByIdAndUpdate(
+      productId,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedProduct) {
+      return res.status(404).send({ message: "المنتج غير موجود" });
+    }
+
+    return res.status(200).send({
+      message: "تم تحديث المنتج بنجاح",
+      product: updatedProduct,
+    });
+  } catch (error) {
+    console.error("خطأ في تحديث المنتج", error);
+    return res.status(500).send({
+      message: "فشل تحديث المنتج",
+      error: error.message,
+    });
   }
-);
+});
+
 
 
 // ====================== حذف منتج ======================

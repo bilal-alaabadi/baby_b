@@ -10,6 +10,11 @@ const OrderSchema = new mongoose.Schema(
         name: { type: String, required: true },
         price: { type: Number, required: true },
         image: { type: String, required: true },
+
+        // ✅ الحقول المطلوبة لحفظ اختيارات العميل
+        chosenColor: { type: String, default: "" }, // اللون المختار
+        chosenSize: { type: String, default: "" },  // المقاس المختار
+        chosenCount: { type: String, default: "" }, // "العدد" المختار (نصي مثل: "2 قطع / 12 عبوة")
       },
     ],
     amount: { type: Number, required: true },
