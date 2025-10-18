@@ -1,4 +1,3 @@
-// routes/orders.js
 const express = require("express");
 const axios = require("axios");
 require("dotenv").config();
@@ -111,7 +110,7 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const paymentLink = `${CHECKOUT_HOST}/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
 
-    // خزّن الطلب بحالة pending — ✅ مع حفظ اللون/المقاس/العدد المختارة
+    // خزّن الطلب بحالة pending — ✅ حفظ chosenCount بشكل موحّد
     const order = new Order({
       orderId: sessionId,
       products: products.map((p) => ({
@@ -121,10 +120,10 @@ router.post("/create-checkout-session", async (req, res) => {
         price: Number(p.price),
         image: Array.isArray(p.image) ? p.image[0] : p.image,
 
-        // السمات المختارة من الواجهة
         chosenColor: p.chosenColor || p.color || "",
-        chosenSize: p.chosenSize || p.size || "",
-        chosenCount: p.chosenCount || p.count || "", // "العدد" كالنص الاختياري في المنتج
+        chosenSize:  p.chosenSize  || p.size  || "",
+        // ✅ أهم سطر: نقرأ chosenCount الموحّد (سواء جاء نصًا أو من خيار countPrices)
+        chosenCount: (p.chosenCount || p.count || (p.chosenOption && p.chosenOption.label)) || "",
       })),
       amount: totalAmount,
       shippingFee, // ✅ يحفظ الرسوم المحسوبة
@@ -161,14 +160,10 @@ router.get("/order-with-products/:orderId", async (req, res) => {
         if (!product) return null;
         return {
           ...product.toObject(),
-
-          // الكميات/الاختيارات من الطلب:
           quantity: item.quantity,
           chosenColor: item.chosenColor || "",
-          chosenSize: item.chosenSize || "",
+          chosenSize:  item.chosenSize  || "",
           chosenCount: item.chosenCount || "",
-
-          // السعر الإجمالي لهذا البند
           lineTotal: (Number(item.price) * Number(item.quantity)).toFixed(2),
         };
       })
@@ -196,7 +191,6 @@ router.post("/confirm-payment", async (req, res) => {
   }
 
   try {
-    // 1) إيجاد الجلسة
     const sessionsResponse = await axios.get(
       `${THAWANI_API_URL}/checkout/session/?limit=10&skip=0`,
       {
@@ -217,7 +211,6 @@ router.post("/confirm-payment", async (req, res) => {
 
     const session_id = session_.session_id;
 
-    // 2) تفاصيل الجلسة للتأكد من الدفع
     const response = await axios.get(
       `${THAWANI_API_URL}/checkout/session/${session_id}?limit=1&skip=0`,
       {
@@ -235,12 +228,10 @@ router.post("/confirm-payment", async (req, res) => {
         .json({ error: "Payment not successful or session not found" });
     }
 
-    // 3) تحديث/إنشاء الطلب
     let order = await Order.findOne({ orderId: session_id });
     let shouldDecrementStock = false;
 
     if (!order) {
-      // حالة نادرة: ننشئ طلبًا من الجلسة (لا نعرف chosenColor/Size/Count هنا)
       const shippingItem = (session.products || []).find((i) => i.name === "رسوم الشحن");
       const shippingFeeFromSession = shippingItem ? (Number(shippingItem.unit_amount || 0) / 1000) : 0;
 
@@ -249,7 +240,7 @@ router.post("/confirm-payment", async (req, res) => {
         products: (session.products || [])
           .filter((i) => i.name !== "رسوم الشحن")
           .map((item) => ({
-            productId: item.productId || "", // قد لا يتوفر من مزود الدفع
+            productId: item.productId || "",
             quantity: Number(item.quantity),
             name: item.name,
             price: Number(item.unit_amount || 0) / 1000,
@@ -278,7 +269,6 @@ router.post("/confirm-payment", async (req, res) => {
 
     await order.save();
 
-    // 4) خصم المخزون — مع تحويل id إلى ObjectId
     if (shouldDecrementStock && Array.isArray(order.products) && order.products.length > 0) {
       const ops = order.products
         .map((item) => {

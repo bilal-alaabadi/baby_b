@@ -41,7 +41,7 @@ router.post("/uploadImages", async (req, res) => {
 });
 
 // ====================== إنشاء منتج ======================
-// ========================= backend/routes/products.route.js (create-product فقط) =========================
+// ========================= server/routes/products.js =========================
 router.post("/create-product", async (req, res) => {
   try {
     let {
@@ -53,10 +53,11 @@ router.post("/create-product", async (req, res) => {
       price,
       image,
       author,
-      stock,
-      size,     // اختياري
-      count,    // اختياري (جديد)
-      colors,   // اختياري (قد تأتي مصفوفة أو نص)
+      stock,        // مخزون عام (عند تعطيل الخيارات)
+      size,
+      count,
+      colors,
+      countPrices,  // [{count, price, stock?}]
     } = req.body;
 
     if (price !== undefined) price = Number(price);
@@ -79,6 +80,25 @@ router.post("/create-product", async (req, res) => {
         .filter(Boolean);
     };
     const colorsArr = normalizeColors(colors);
+
+    const normalizeCountPrices = (val) => {
+      if (!val) return [];
+      let arr = val;
+      if (typeof val === 'string') {
+        try { arr = JSON.parse(val); } catch { arr = []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((item) => ({
+          count: String(item?.count || '').trim(),
+          price: Number(item?.price),
+          stock: (item?.stock === undefined || item?.stock === null || item?.stock === '')
+            ? undefined
+            : Math.max(0, Math.floor(Number(item?.stock))),
+        }))
+        .filter((item) => item.count && !Number.isNaN(item.price) && item.price >= 0);
+    };
+    const countPricesArr = normalizeCountPrices(countPrices);
 
     if (!name || !mainCategory || !category || !description || price == null || !author) {
       return res.status(400).send({
@@ -111,9 +131,10 @@ router.post("/create-product", async (req, res) => {
       image: normalizedImages,
       author,
       stock,
-      size: String(size || "").trim() || undefined,   // اختياري
-      count: String(count || "").trim() || undefined, // اختياري
-      colors: colorsArr,                               // اختياري
+      size: String(size || "").trim() || undefined,
+      count: String(count || "").trim() || undefined,
+      colors: colorsArr,
+      countPrices: countPricesArr, // [{count, price, stock?}]
     };
 
     const newProduct = new Products(productData);
@@ -125,16 +146,16 @@ router.post("/create-product", async (req, res) => {
   }
 });
 
-
 // ====================== كل المنتجات ======================
 // GET /api/products
+// ========================= routes/products.js (GET /products) =========================
+// ========================= routes/products.js (GET /products) =========================
 router.get("/", async (req, res) => {
   try {
     const {
-      mainCategory,   // ✅ جديد: الفئة الرئيسية
-      category,       // النوع/التصنيف الفرعي
-      size,
-      color,
+      mainCategory,   // الفئة الرئيسية
+      category,       // التصنيف الفرعي
+      availability,   // '', 'in', 'out'  ✅ فلتر المخزون
       minPrice,
       maxPrice,
       page = 1,
@@ -142,7 +163,6 @@ router.get("/", async (req, res) => {
       sort = "createdAt:desc",
     } = req.query;
 
-    // أداة مساعدة: هل القيمة تعني "الكل" / "غير محدد"؟
     const isAll = (v) =>
       v === undefined ||
       v === null ||
@@ -152,57 +172,38 @@ router.get("/", async (req, res) => {
 
     const filter = {};
 
-    // ✅ فلترة الفئة الرئيسية
-    if (!isAll(mainCategory)) {
-      filter.mainCategory = String(mainCategory).trim();
-    }
+    // التصنيفات (لا نحذفها)
+    if (!isAll(mainCategory)) filter.mainCategory = String(mainCategory).trim();
+    if (!isAll(category))     filter.category     = String(category).trim();
 
-    // ✅ فلترة النوع/التصنيف الفرعي
-    // - إذا category = الكل → لا نفلتر بها
-    // - إذا category محددة → نضيفها
-    if (!isAll(category)) {
-      filter.category = String(category).trim();
-    }
+    // ✅ فلتر المخزون
+    if (availability === 'in')   filter.stock = { $gt: 0 };
+    if (availability === 'out')  filter.stock = { $eq: 0 };
 
-    // ✅ فلترة المقاس (اختياري)
-    // ملاحظة: كان عندك شرط خاص "حناء بودر" — تقدر ترجع له لو تحتاج:
-    // if (!isAll(category) && category === "حناء بودر" && !isAll(size)) { filter.size = size; }
-    if (!isAll(size)) {
-      filter.size = String(size).trim();
-    }
-
-    // ✅ فلترة اللون: حقل الألوان لديك هو مصفوفة `colors`، فنستخدم $in
-    if (!isAll(color)) {
-      filter.colors = { $in: [String(color).trim()] };
-    }
-
-    // ✅ فلترة السعر
-    const priceMinNum = parseFloat(minPrice);
-    const priceMaxNum = parseFloat(maxPrice);
-    if (!Number.isNaN(priceMinNum) || !Number.isNaN(priceMaxNum)) {
+    // السعر
+    const min = parseFloat(minPrice);
+    const max = parseFloat(maxPrice);
+    if (!Number.isNaN(min) || !Number.isNaN(max)) {
       filter.price = {};
-      if (!Number.isNaN(priceMinNum)) filter.price.$gte = priceMinNum;
-      if (!Number.isNaN(priceMaxNum)) filter.price.$lte = priceMaxNum;
-      // لو ما صار عندنا مفاتيح في السعر، نحذفه
+      if (!Number.isNaN(min)) filter.price.$gte = min;
+      if (!Number.isNaN(max)) filter.price.$lte = max;
       if (Object.keys(filter.price).length === 0) delete filter.price;
     }
 
-    // ✅ ترتيب (يدعم الصيغة: "createdAt:desc" / "price:asc" ...)
+    // الترتيب
     let sortSpec = { createdAt: -1 };
     if (typeof sort === "string" && sort.includes(":")) {
       const [key, dir] = sort.split(":");
-      if (key) {
-        sortSpec = { [key]: dir === "asc" ? 1 : -1 };
-      }
+      if (key) sortSpec = { [key]: dir === "asc" ? 1 : -1 };
     }
 
-    // ✅ صفحات
+    // صفحات
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, parseInt(limit, 10) || 10);
     const skip = (pageNum - 1) * limitNum;
 
     const totalProducts = await Products.countDocuments(filter);
-    const totalPages = Math.ceil(totalProducts / limitNum);
+    const totalPages = Math.ceil(totalProducts / limitNum) || 1;
 
     const products = await Products.find(filter)
       .sort(sortSpec)
@@ -210,7 +211,16 @@ router.get("/", async (req, res) => {
       .limit(limitNum)
       .populate("author", "email");
 
-    res.status(200).send({ products, totalPages, totalProducts });
+    // أعلى سعر ضمن الفلترة الحالية
+    let highestPrice = null;
+    const maxAgg = await Products.aggregate([
+      { $match: filter },
+      { $group: { _id: null, max: { $max: "$price" } } },
+      { $project: { _id: 0, max: 1 } }
+    ]);
+    if (maxAgg && maxAgg.length > 0) highestPrice = maxAgg[0].max;
+
+    res.status(200).send({ products, totalPages, totalProducts, highestPrice });
   } catch (error) {
     console.error("Error fetching products:", error);
     res.status(500).send({ message: "Failed to fetch products" });
@@ -276,27 +286,26 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       description,
       price,
       oldPrice,
-      image,     // ممكن تكون مصفوفة أو نص واحد أو غير موجودة نهائيًا
-      author,    // اختياري
-      stock,     // اختياري
-      size,      // اختياري
-      count,     // اختياري
-      colors,    // اختياري (مصفوفة أو نص "أحمر,أزرق")
+      image,       // مصفوفة/نص/غير موجود
+      author,      // اختياري
+      stock,       // اختياري
+      size,        // اختياري
+      count,       // اختياري
+      colors,      // اختياري (مصفوفة أو "أحمر,أزرق")
+      countPrices, // [{count, price, stock?}] أو نص JSON
     } = req.body;
 
     // ====== تحويلات رقمية آمنة ======
-    const priceNum = price !== undefined ? Number(price) : undefined;
-    const oldPriceNum =
-      oldPrice !== undefined && oldPrice !== "" ? Number(oldPrice) : undefined;
-    const stockNum =
-      stock !== undefined && stock !== "" ? Math.floor(Number(stock)) : undefined;
+    const priceNum    = price    !== undefined ? Number(price)    : undefined;
+    const oldPriceNum = (oldPrice !== undefined && oldPrice !== "") ? Number(oldPrice) : undefined;
+
+    // ملاحظة: نسمح بالقيمة 0 تمامًا (تعني غير متوفر)
+    const stockNum = (stock !== undefined && stock !== "") ? Math.floor(Number(stock)) : undefined;
 
     // ====== تطبيع الألوان ======
     const normalizeColors = (val) => {
-      if (val === undefined) return undefined; // لم يُرسل الحقل: لا نلمسه
-      if (Array.isArray(val)) {
-        return val.map((c) => String(c || "").trim()).filter(Boolean);
-      }
+      if (val === undefined) return undefined; // لم يُرسل: لا نلمس
+      if (Array.isArray(val)) return val.map(c => String(c || "").trim()).filter(Boolean);
       return String(val || "")
         .split(",")
         .map((c) => c.trim())
@@ -304,15 +313,29 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
     };
     const colorsArr = normalizeColors(colors);
 
-    // ====== التحقق من الحقول المطلوبة (مثل create) ======
-    // واجهة التحديث عندك ترسل كل الحقول الأساسية، فنحافظ على نفس التحقق
-    if (
-      !name ||
-      !mainCategory ||
-      !category ||
-      priceNum == null || // يشمل undefined و null
-      !description
-    ) {
+    // ====== تطبيع قائمة الخيارات countPrices ======
+    const normalizeCountPrices = (val) => {
+      if (val === undefined) return undefined; // لم يُرسل: لا نلمس
+      let arr = val;
+      if (typeof val === "string") {
+        try { arr = JSON.parse(val); } catch { arr = []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((item) => ({
+          count: String(item?.count || "").trim(),
+          price: Number(item?.price),
+          stock:
+            (item?.stock === undefined || item?.stock === null || item?.stock === "")
+              ? undefined
+              : Math.max(0, Math.floor(Number(item?.stock))),
+        }))
+        .filter((item) => item.count && !Number.isNaN(item.price) && item.price >= 0);
+    };
+    const countPricesArr = normalizeCountPrices(countPrices);
+
+    // ====== التحقق من الحقول المطلوبة ======
+    if (!name || !mainCategory || !category || priceNum == null || !description) {
       return res.status(400).send({
         message:
           "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، الوصف، السعر)",
@@ -334,7 +357,7 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
     const toTrimOrNull = (v) => {
       if (v === undefined) return undefined; // لم يُرسل: لا نلمس
       const s = String(v || "").trim();
-      return s || null; // لو فاضي نخزن null (يتماشى مع الـ schema)
+      return s || null; // نخزن null لو فاضي
     };
 
     const updateData = {
@@ -342,22 +365,16 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       mainCategory: String(mainCategory).trim(),
       category: String(category).trim(),
       description: String(description).trim(),
-      price: priceNum,
+      price: priceNum, // في حال وجود خيارات، هذا أقل سعر بينها (الواجهة ترسله)
     };
 
-    // الحقول الاختيارية — لا نضعها إلا لو أُرسلت
-    if (author !== undefined) updateData.author = author;
+    if (author     !== undefined) updateData.author  = author;
     if (oldPriceNum !== undefined) updateData.oldPrice = oldPriceNum;
-    if (stockNum !== undefined) updateData.stock = stockNum;
-    if (size !== undefined) updateData.size = toTrimOrNull(size);
-    if (count !== undefined) updateData.count = toTrimOrNull(count);
-    if (colorsArr !== undefined) updateData.colors = colorsArr;
+    if (size       !== undefined) updateData.size    = toTrimOrNull(size);
+    if (count      !== undefined) updateData.count   = toTrimOrNull(count);
+    if (colorsArr  !== undefined) updateData.colors  = colorsArr;
 
     // ====== الصور ======
-    // ندعم:
-    // 1) image = ['url1','url2', ...]
-    // 2) image = 'url' (نحوّلها لمصفوفة)
-    // 3) عدم إرسال image => لا نلمس الصور
     if (image !== undefined) {
       let normalizedImages = [];
       if (Array.isArray(image)) {
@@ -366,10 +383,30 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
         const one = image.trim();
         if (one) normalizedImages = [one];
       }
+      updateData.image = normalizedImages; // مصفوفة فارغة => تفريغ الصور
+    }
 
-      // ملاحظة: في التحديث إذا وصلت مصفوفة فارغة، سنعتبرها رغبة في تفريغ الصور
-      // لكن لو تفضل الإبقاء على القديمة عند مصفوفة فارغة، احذف السطر التالي وضع شرط length>0
-      updateData.image = normalizedImages;
+    // ====== المخزون: من countPrices أو من stock ======
+    // لو وصلت countPricesArr: نحدّثها ونحسب منها المخزون الكلي إن احتوت أسهماً رقمية
+    if (countPricesArr !== undefined) {
+      updateData.countPrices = countPricesArr;
+
+      const sumOptionStock = countPricesArr
+        .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
+        .reduce((a, b) => a + b, 0);
+
+      // إن كان هناك على الأقل خيار واحد يحوي "stock" رقمي، نحدّث stock بمجموعها
+      const anyOptionHasStock = countPricesArr.some(x => typeof x.stock === "number");
+      if (anyOptionHasStock) {
+        updateData.stock = sumOptionStock; // يسمح بالقيمة 0
+      } else if (stockNum !== undefined) {
+        // لا يوجد مخزون على مستوى الخيارات لكن أُرسل stock عام -> نستخدمه
+        updateData.stock = stockNum;
+      }
+      // لو لم يُرسل stockNum ولم تحوِ الخيارات stock => لا نلمس stock
+    } else if (stockNum !== undefined) {
+      // لم تُرسل countPrices، لكن أُرسل stock صريحًا -> نحدّثه (حتى لو 0)
+      updateData.stock = stockNum;
     }
 
     // تنفيذ التحديث
