@@ -42,6 +42,7 @@ router.post("/uploadImages", async (req, res) => {
 
 // ====================== إنشاء منتج ======================
 // ========================= server/routes/products.js =========================
+// ========================= server/routes/products.js =========================
 router.post("/create-product", async (req, res) => {
   try {
     let {
@@ -145,6 +146,7 @@ router.post("/create-product", async (req, res) => {
     return res.status(500).send({ message: "Failed to create new product" });
   }
 });
+
 
 // ====================== كل المنتجات ======================
 // GET /api/products
@@ -275,6 +277,7 @@ router.get(["/product/:id", "/:id"], async (req, res) => {
 });
 
 // ====================== تحديث منتج ======================
+// ========================= backend/router (مقتطف التحديث) =========================
 router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const productId = req.params.id;
@@ -295,16 +298,12 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       countPrices, // [{count, price, stock?}] أو نص JSON
     } = req.body;
 
-    // ====== تحويلات رقمية آمنة ======
     const priceNum    = price    !== undefined ? Number(price)    : undefined;
     const oldPriceNum = (oldPrice !== undefined && oldPrice !== "") ? Number(oldPrice) : undefined;
+    const stockNum    = (stock !== undefined && stock !== "") ? Math.floor(Number(stock)) : undefined;
 
-    // ملاحظة: نسمح بالقيمة 0 تمامًا (تعني غير متوفر)
-    const stockNum = (stock !== undefined && stock !== "") ? Math.floor(Number(stock)) : undefined;
-
-    // ====== تطبيع الألوان ======
     const normalizeColors = (val) => {
-      if (val === undefined) return undefined; // لم يُرسل: لا نلمس
+      if (val === undefined) return undefined;
       if (Array.isArray(val)) return val.map(c => String(c || "").trim()).filter(Boolean);
       return String(val || "")
         .split(",")
@@ -313,9 +312,8 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
     };
     const colorsArr = normalizeColors(colors);
 
-    // ====== تطبيع قائمة الخيارات countPrices ======
     const normalizeCountPrices = (val) => {
-      if (val === undefined) return undefined; // لم يُرسل: لا نلمس
+      if (val === undefined) return undefined;
       let arr = val;
       if (typeof val === "string") {
         try { arr = JSON.parse(val); } catch { arr = []; }
@@ -334,15 +332,12 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
     };
     const countPricesArr = normalizeCountPrices(countPrices);
 
-    // ====== التحقق من الحقول المطلوبة ======
     if (!name || !mainCategory || !category || priceNum == null || !description) {
       return res.status(400).send({
-        message:
-          "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، الوصف، السعر)",
+        message: "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، الوصف، السعر)",
       });
     }
 
-    // ====== فحوصات القيم الرقمية ======
     if (Number.isNaN(priceNum) || priceNum < 0) {
       return res.status(400).send({ message: "السعر غير صالح" });
     }
@@ -353,11 +348,10 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       return res.status(400).send({ message: "قيمة المخزون (stock) غير صالحة" });
     }
 
-    // ====== تجهيز بيانات التحديث ======
     const toTrimOrNull = (v) => {
-      if (v === undefined) return undefined; // لم يُرسل: لا نلمس
+      if (v === undefined) return undefined;
       const s = String(v || "").trim();
-      return s || null; // نخزن null لو فاضي
+      return s || null;
     };
 
     const updateData = {
@@ -365,16 +359,15 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       mainCategory: String(mainCategory).trim(),
       category: String(category).trim(),
       description: String(description).trim(),
-      price: priceNum, // في حال وجود خيارات، هذا أقل سعر بينها (الواجهة ترسله)
+      price: priceNum,
     };
 
-    if (author     !== undefined) updateData.author  = author;
+    if (author      !== undefined) updateData.author   = author;
     if (oldPriceNum !== undefined) updateData.oldPrice = oldPriceNum;
-    if (size       !== undefined) updateData.size    = toTrimOrNull(size);
-    if (count      !== undefined) updateData.count   = toTrimOrNull(count);
-    if (colorsArr  !== undefined) updateData.colors  = colorsArr;
+    if (size        !== undefined) updateData.size     = toTrimOrNull(size);   // ← سيصبح null لو فاضي
+    if (count       !== undefined) updateData.count    = toTrimOrNull(count);  // ← سيصبح null لو فاضي
+    if (colorsArr   !== undefined) updateData.colors   = colorsArr;
 
-    // ====== الصور ======
     if (image !== undefined) {
       let normalizedImages = [];
       if (Array.isArray(image)) {
@@ -383,11 +376,9 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
         const one = image.trim();
         if (one) normalizedImages = [one];
       }
-      updateData.image = normalizedImages; // مصفوفة فارغة => تفريغ الصور
+      updateData.image = normalizedImages;
     }
 
-    // ====== المخزون: من countPrices أو من stock ======
-    // لو وصلت countPricesArr: نحدّثها ونحسب منها المخزون الكلي إن احتوت أسهماً رقمية
     if (countPricesArr !== undefined) {
       updateData.countPrices = countPricesArr;
 
@@ -395,21 +386,16 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
         .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
         .reduce((a, b) => a + b, 0);
 
-      // إن كان هناك على الأقل خيار واحد يحوي "stock" رقمي، نحدّث stock بمجموعها
       const anyOptionHasStock = countPricesArr.some(x => typeof x.stock === "number");
       if (anyOptionHasStock) {
-        updateData.stock = sumOptionStock; // يسمح بالقيمة 0
+        updateData.stock = sumOptionStock;
       } else if (stockNum !== undefined) {
-        // لا يوجد مخزون على مستوى الخيارات لكن أُرسل stock عام -> نستخدمه
         updateData.stock = stockNum;
       }
-      // لو لم يُرسل stockNum ولم تحوِ الخيارات stock => لا نلمس stock
     } else if (stockNum !== undefined) {
-      // لم تُرسل countPrices، لكن أُرسل stock صريحًا -> نحدّثه (حتى لو 0)
       updateData.stock = stockNum;
     }
 
-    // تنفيذ التحديث
     const updatedProduct = await Products.findByIdAndUpdate(
       productId,
       { $set: updateData },
