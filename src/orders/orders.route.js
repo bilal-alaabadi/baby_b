@@ -41,8 +41,7 @@ router.post("/create-checkout-session", async (req, res) => {
   }
 
   const CHECKOUT_HOST = THAWANI_API_URL.includes("uat")
-    ? "https://uatcheckout.thawani.om"
-    : "https://checkout.thawani.om";
+     "https://checkout.thawani.om";
 
   if (!Array.isArray(products) || products.length === 0) {
     return res.status(400).json({ error: "Invalid or empty products array" });

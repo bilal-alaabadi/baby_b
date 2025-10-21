@@ -1,3 +1,4 @@
+// server.js
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -5,7 +6,6 @@ const app = express();
 const path = require("path");
 require("dotenv").config();
 const cookieParser = require("cookie-parser");
-const bodyParser = require("body-parser");
 const port = 5000;
 
 // Remove bodyParser (redundant with express.json())
@@ -17,28 +17,33 @@ app.use(cookieParser());
 const allowedOrigins = [
   "https://www.baby7aven.com",
   "https://baby7aven.com",
+  "http://localhost:5173",
 ];
 
-app.use(cors({
+// جهّز إعدادات CORS في متغيّر واحد لإعادة استخدامها مع app.use و app.options
+const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
       callback(new Error("Not allowed by CORS"));
     }
   },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  // ✅ أضف PATCH هنا ليظهر في Access-Control-Allow-Methods
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true,
   preflightContinue: false,
-  optionsSuccessStatus: 204
-}));
+  optionsSuccessStatus: 204,
+};
 
-// OPTIONS handler (for preflight)
-app.options('*', cors());  // Let the cors middleware handle it
+app.use(cors(corsOptions));
+
+// OPTIONS handler (for preflight) بنفس الإعدادات لضمان رجوع نفس الهيدرز
+app.options("*", cors(corsOptions));
 
 // رفع الصور
 const uploadImage = require("./src/utils/uploadImage");
@@ -56,52 +61,48 @@ app.use("/api/reviews", reviewRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/stats", statsRoutes);
 
-
 // الاتصال بقاعدة البيانات
 main()
-    .then(() => console.log("MongoDB is successfully connected."))
-    .catch((err) => console.log(err));
+  .then(() => console.log("MongoDB is successfully connected."))
+  .catch((err) => console.log(err));
 
 async function main() {
-    await mongoose.connect(process.env.DB_URL);
+  await mongoose.connect(process.env.DB_URL);
 
-    app.get("/", (req, res) => {
-        res.send("يعمل الان");
-    });
+  app.get("/", (req, res) => {
+    res.send("يعمل الان");
+  });
 }
 
 // رفع صورة واحدة
 app.post("/uploadImage", (req, res) => {
-    uploadImage(req.body.image)
-        .then((url) => res.send(url))
-        .catch((err) => res.status(500).send(err));
+  uploadImage(req.body.image)
+    .then((url) => res.send(url))
+    .catch((err) => res.status(500).send(err));
 });
-
 
 // رفع عدة صور
 app.post("/uploadImages", async (req, res) => {
-
-    try {
-        const { images } = req.body;
-        if (!images || !Array.isArray(images)) {
-            return res.status(400).send("Invalid request: images array is required.");
-        }
-
-        const uploadPromises = images.map((image) => uploadImage(image));
-        const urls = await Promise.all(uploadPromises);
-
-        res.send(urls);
-    } catch (error) {
-        console.error("Error uploading images:", error);
-        res.status(500).send("Internal Server Error");
+  try {
+    const { images } = req.body;
+    if (!images || !Array.isArray(images)) {
+      return res.status(400).send("Invalid request: images array is required.");
     }
+
+    const uploadPromises = images.map((image) => uploadImage(image));
+    const urls = await Promise.all(uploadPromises);
+
+    res.send(urls);
+  } catch (error) {
+    console.error("Error uploading images:", error);
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 // تشغيل الخادم
 app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
-
 
 
 // const express = require("express");
