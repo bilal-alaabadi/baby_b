@@ -23,7 +23,7 @@ const ProductSchema = new mongoose.Schema(
 
     rating: { type: Number, default: 0, min: 0, max: 5 },
 
-    // مخزون عام (عند تعطيل الخيارات)
+    // المخزون الإجمالي (يتم حسابه من الأوضاع المختلفة)
     stock: { type: Number, required: true, min: 0, default: 0 },
 
     size: { type: String, default: null, trim: true },
@@ -34,12 +34,33 @@ const ProductSchema = new mongoose.Schema(
       {
         count: { type: String, trim: true, required: true },
         price: { type: Number, min: 0, required: true },
-        stock: { type: Number, min: 0, required: false }, // جديد اختياري
+        stock: { type: Number, min: 0, required: false }, // يُستخدم فقط عند عدم وجود Matrix
         _id: false,
       }
     ],
 
+    // ألوان بدون مخزون (توافق قديم)
     colors: { type: [String], default: [] },
+
+    // ألوان بمخزون (عند الألوان فقط)
+    colorsStock: [
+      {
+        color: { type: String, trim: true, required: true },
+        stock: { type: Number, min: 0, required: true },
+        _id: false,
+      }
+    ],
+
+    // مصفوفة (ألوان × قطع) — سعر ومخزون لكل تركيبة
+    variants: [
+      {
+        color: { type: String, trim: true, required: true },
+        count: { type: String, trim: true, required: true },
+        price: { type: Number, min: 0, required: true },
+        stock: { type: Number, min: 0, required: true },
+        _id: false,
+      }
+    ],
 
     author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   },

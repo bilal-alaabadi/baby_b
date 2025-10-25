@@ -43,6 +43,8 @@ router.post("/uploadImages", async (req, res) => {
 // ====================== إنشاء منتج ======================
 // ========================= server/routes/products.js =========================
 // ========================= server/routes/products.js =========================
+// ========================= backend/routes/products.route.js (excerpt) =========================
+// ========================= backend/routes/products.route.js (excerpt) =========================
 router.post("/create-product", async (req, res) => {
   try {
     let {
@@ -54,23 +56,25 @@ router.post("/create-product", async (req, res) => {
       price,
       image,
       author,
-      stock,        // مخزون عام (عند تعطيل الخيارات)
+      stock,        // المخزون الإجمالي (يُحتسب حسب الحالة)
       size,
       count,
-      colors,
-      countPrices,  // [{count, price, stock?}]
+
+      // الحقول المرنة:
+      colors,       // أسماء الألوان فقط (توافق)
+      colorsStock,  // [{ color, stock }] — للألوان فقط
+      countPrices,  // [{ count, price, stock? }] — للخيارات فقط
+      variants,     // [{ color, count, price, stock }] — Matrix (ألوان × قطع)
     } = req.body;
 
     if (price !== undefined) price = Number(price);
     if (oldPrice !== undefined && oldPrice !== "") oldPrice = Number(oldPrice);
     else oldPrice = undefined;
 
-    if (stock === undefined || stock === null || stock === "") {
-      stock = 0;
-    } else {
-      stock = Math.floor(Number(stock));
-    }
+    if (stock === undefined || stock === null || stock === "") stock = 0;
+    else stock = Math.floor(Number(stock));
 
+    // ألوان (أسماء فقط)
     const normalizeColors = (val) => {
       if (Array.isArray(val)) {
         return val.map((c) => String(c || "").trim()).filter(Boolean);
@@ -82,6 +86,26 @@ router.post("/create-product", async (req, res) => {
     };
     const colorsArr = normalizeColors(colors);
 
+    // ألوان بمخزون
+    const normalizeColorsStock = (val) => {
+      if (!val) return [];
+      let arr = val;
+      if (typeof val === 'string') {
+        try { arr = JSON.parse(val); } catch { arr = []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((item) => ({
+          color: String(item?.color || '').trim(),
+          stock: (item?.stock === undefined || item?.stock === null || item?.stock === '')
+            ? undefined
+            : Math.max(0, Math.floor(Number(item?.stock))),
+        }))
+        .filter((item) => item.color && typeof item.stock === 'number' && item.stock >= 0);
+    };
+    const colorsStockArr = normalizeColorsStock(colorsStock);
+
+    // خيارات مع/بدون مخزون
     const normalizeCountPrices = (val) => {
       if (!val) return [];
       let arr = val;
@@ -101,10 +125,34 @@ router.post("/create-product", async (req, res) => {
     };
     const countPricesArr = normalizeCountPrices(countPrices);
 
+    // Matrix (ألوان × قطع)
+    const normalizeVariants = (val) => {
+      if (!val) return [];
+      let arr = val;
+      if (typeof val === 'string') {
+        try { arr = JSON.parse(val); } catch { arr = []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((item) => ({
+          color: String(item?.color || '').trim(),
+          count: String(item?.count || '').trim(),
+          price: Number(item?.price),
+          stock: (item?.stock === undefined || item?.stock === null || item?.stock === '')
+            ? undefined
+            : Math.max(0, Math.floor(Number(item?.stock))),
+        }))
+        .filter((item) =>
+          item.color && item.count &&
+          !Number.isNaN(item.price) && item.price >= 0 &&
+          typeof item.stock === 'number' && item.stock >= 0
+        );
+    };
+    const variantsArr = normalizeVariants(variants);
+
     if (!name || !mainCategory || !category || !description || price == null || !author) {
       return res.status(400).send({
-        message:
-          "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، الوصف، السعر، المؤلف)",
+        message: "جميع الحقول المطلوبة يجب إرسالها (الاسم، الفئة الرئيسية، النوع، الوصف، السعر، المؤلف)",
       });
     }
 
@@ -134,8 +182,12 @@ router.post("/create-product", async (req, res) => {
       stock,
       size: String(size || "").trim() || undefined,
       count: String(count || "").trim() || undefined,
-      colors: colorsArr,
-      countPrices: countPricesArr, // [{count, price, stock?}]
+
+      // الحقول المرنة:
+      colors: colorsArr,                               // أسماء فقط
+      colorsStock: colorsStockArr.length ? colorsStockArr : undefined, // ألوان بمخزون
+      countPrices: countPricesArr,                     // خيارات (قد تتضمن مخزونًا إذا لم يوجد Matrix)
+      variants: variantsArr.length ? variantsArr : undefined, // Matrix
     };
 
     const newProduct = new Products(productData);
@@ -278,6 +330,7 @@ router.get(["/product/:id", "/:id"], async (req, res) => {
 
 // ====================== تحديث منتج ======================
 // ========================= backend/router (مقتطف التحديث) =========================
+// ========================= backend/routes/products.patch.js (router.patch) =========================
 router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const productId = req.params.id;
@@ -291,17 +344,21 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       oldPrice,
       image,       // مصفوفة/نص/غير موجود
       author,      // اختياري
-      stock,       // اختياري
+      stock,       // اختياري (عادي)
       size,        // اختياري
       count,       // اختياري
-      colors,      // اختياري (مصفوفة أو "أحمر,أزرق")
-      countPrices, // [{count, price, stock?}] أو نص JSON
+
+      // قابلة للإرسال من الواجهة الجديدة:
+      colors,         // مصفوفة أسماء (للتوافق/البحث)
+      colorsStock,    // [{color, stock}]
+      countPrices,    // [{count, price, stock}]
     } = req.body;
 
-    const priceNum    = price    !== undefined ? Number(price)    : undefined;
+    const priceNum    = price !== undefined ? Number(price) : undefined;
     const oldPriceNum = (oldPrice !== undefined && oldPrice !== "") ? Number(oldPrice) : undefined;
-    const stockNum    = (stock !== undefined && stock !== "") ? Math.floor(Number(stock)) : undefined;
+    const stockNum    = (stock !== undefined && stock !== "") ? Math.max(0, Math.floor(Number(stock))) : undefined;
 
+    // ألوان كأسماء
     const normalizeColors = (val) => {
       if (val === undefined) return undefined;
       if (Array.isArray(val)) return val.map(c => String(c || "").trim()).filter(Boolean);
@@ -312,11 +369,32 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
     };
     const colorsArr = normalizeColors(colors);
 
-    const normalizeCountPrices = (val) => {
-      if (val === undefined) return undefined;
+    // ألوان بمخزون
+    const normalizeColorsStock = (val) => {
+      if (val === undefined) return undefined; // عدم التعديل إن لم تُرسل
       let arr = val;
-      if (typeof val === "string") {
-        try { arr = JSON.parse(val); } catch { arr = []; }
+      if (typeof arr === 'string') {
+        try { arr = JSON.parse(arr); } catch { arr = []; }
+      }
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .map((item) => ({
+          color: String(item?.color || "").trim(),
+          stock:
+            (item?.stock === undefined || item?.stock === null || item?.stock === "")
+              ? undefined
+              : Math.max(0, Math.floor(Number(item?.stock))),
+        }))
+        .filter((it) => it.color && typeof it.stock === 'number' && it.stock >= 0);
+    };
+    const colorsStockArr = normalizeColorsStock(colorsStock);
+
+    // عدد القطع
+    const normalizeCountPrices = (val) => {
+      if (val === undefined) return undefined; // عدم التعديل إن لم تُرسل
+      let arr = val;
+      if (typeof arr === "string") {
+        try { arr = JSON.parse(arr); } catch { arr = []; }
       }
       if (!Array.isArray(arr)) return [];
       return arr
@@ -328,7 +406,7 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
               ? undefined
               : Math.max(0, Math.floor(Number(item?.stock))),
         }))
-        .filter((item) => item.count && !Number.isNaN(item.price) && item.price >= 0);
+        .filter((it) => it.count && !Number.isNaN(it.price) && it.price >= 0 && (it.stock === undefined || it.stock >= 0));
     };
     const countPricesArr = normalizeCountPrices(countPrices);
 
@@ -364,8 +442,8 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
 
     if (author      !== undefined) updateData.author   = author;
     if (oldPriceNum !== undefined) updateData.oldPrice = oldPriceNum;
-    if (size        !== undefined) updateData.size     = toTrimOrNull(size);   // ← سيصبح null لو فاضي
-    if (count       !== undefined) updateData.count    = toTrimOrNull(count);  // ← سيصبح null لو فاضي
+    if (size        !== undefined) updateData.size     = toTrimOrNull(size);
+    if (count       !== undefined) updateData.count    = toTrimOrNull(count);
     if (colorsArr   !== undefined) updateData.colors   = colorsArr;
 
     if (image !== undefined) {
@@ -379,19 +457,38 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       updateData.image = normalizedImages;
     }
 
+    // دمج countPrices + colorsStock مع حساب stock النهائي
+    let finalStockFromStructures = null;
+
+    // لو أُرسلت countPrices: حدّث + اجمع مخزونها
     if (countPricesArr !== undefined) {
       updateData.countPrices = countPricesArr;
+      const sumCount = countPricesArr
+        .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
+        .reduce((a, b) => a + b, 0);
+      finalStockFromStructures = (finalStockFromStructures == null) ? sumCount : finalStockFromStructures;
+    }
 
-      const sumOptionStock = countPricesArr
+    // لو أُرسلت colorsStock: حدّث + اجمع مخزونها
+    if (colorsStockArr !== undefined) {
+      updateData.colorsStock = colorsStockArr;
+      const sumColors = colorsStockArr
         .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
         .reduce((a, b) => a + b, 0);
 
-      const anyOptionHasStock = countPricesArr.some(x => typeof x.stock === "number");
-      if (anyOptionHasStock) {
-        updateData.stock = sumOptionStock;
-      } else if (stockNum !== undefined) {
-        updateData.stock = stockNum;
+      if (finalStockFromStructures == null) {
+        finalStockFromStructures = sumColors;
+      } else {
+        // إذا تم إرسال الاثنين معًا: المخزون النهائي = الحد الأدنى بين المجموعين
+        finalStockFromStructures = Math.min(finalStockFromStructures, sumColors);
       }
+    }
+
+    // أولوية تحديد stock:
+    // 1) إن تم إرسال countPrices و/أو colorsStock ⇒ احسب حسب القاعدة
+    // 2) وإلا لو أُرسل stockNum صراحةً ⇒ استخدمه
+    if (finalStockFromStructures != null) {
+      updateData.stock = finalStockFromStructures;
     } else if (stockNum !== undefined) {
       updateData.stock = stockNum;
     }

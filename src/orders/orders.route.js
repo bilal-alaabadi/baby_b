@@ -1,9 +1,10 @@
+// ========================= backend/orders/orders.route.js =========================
 const express = require("express");
 const axios = require("axios");
 require("dotenv").config();
 
 const Order = require("./orders.model");
-const Product = require("../products/products.model"); // تأكد من المسار الصحيح
+const Product = require("../products/products.model");
 const { Types } = require("mongoose");
 
 const router = express.Router();
@@ -40,7 +41,6 @@ router.post("/create-checkout-session", async (req, res) => {
       .json({ error: "Thawani keys not configured on the server" });
   }
 
-  // ✅ إصلاح تعريف المضيف بحسب بيئة UAT/Production
   const CHECKOUT_HOST = "https://checkout.thawani.om";
 
   if (!Array.isArray(products) || products.length === 0) {
@@ -48,24 +48,21 @@ router.post("/create-checkout-session", async (req, res) => {
   }
 
   try {
-    // المجموع الفرعي بالريال
     const subtotal = products.reduce(
       (total, p) => total + Number(p.price) * Number(p.quantity),
       0
     );
 
-    // ✅ حساب الشحن وفق القاعدة
     const shippingFee = computeShippingFee(subtotal);
     const totalAmount = subtotal + shippingFee;
 
     const lineItems = products.map((p) => ({
       name: p.name,
-      productId: p._id, // لأغراضك فقط
+      productId: p._id,
       quantity: Number(p.quantity),
       unit_amount: Math.round(Number(p.price) * 1000), // بالبيسة
     }));
 
-    // أضف رسوم الشحن كبند مستقل فقط إذا > 0
     if (shippingFee > 0) {
       lineItems.push({
         name: "رسوم الشحن",
@@ -109,7 +106,6 @@ router.post("/create-checkout-session", async (req, res) => {
 
     const paymentLink = `${CHECKOUT_HOST}/pay/${sessionId}?key=${THAWANI_PUBLISH_KEY}`;
 
-    // خزّن الطلب بحالة pending — ✅ حفظ chosenCount بشكل موحّد
     const order = new Order({
       orderId: sessionId,
       products: products.map((p) => ({
@@ -121,11 +117,10 @@ router.post("/create-checkout-session", async (req, res) => {
 
         chosenColor: p.chosenColor || p.color || "",
         chosenSize:  p.chosenSize  || p.size  || "",
-        // ✅ أهم سطر: نقرأ chosenCount الموحّد (سواء جاء نصًا أو من خيار countPrices)
         chosenCount: (p.chosenCount || p.count || (p.chosenOption && p.chosenOption.label)) || "",
       })),
       amount: totalAmount,
-      shippingFee, // ✅ يحفظ الرسوم المحسوبة
+      shippingFee,
       customerName,
       customerPhone,
       country,
@@ -190,6 +185,7 @@ router.post("/confirm-payment", async (req, res) => {
   }
 
   try {
+    // ابحث عن الجلسة
     const sessionsResponse = await axios.get(
       `${THAWANI_API_URL}/checkout/session/?limit=10&skip=0`,
       {
@@ -227,6 +223,7 @@ router.post("/confirm-payment", async (req, res) => {
         .json({ error: "Payment not successful or session not found" });
     }
 
+    // حمّل الطلب من قواعدك
     let order = await Order.findOne({ orderId: session_id });
     let shouldDecrementStock = false;
 
@@ -268,22 +265,83 @@ router.post("/confirm-payment", async (req, res) => {
 
     await order.save();
 
+    // ✅ إنقاص المخزون وفق (لون/خيار/عام)
     if (shouldDecrementStock && Array.isArray(order.products) && order.products.length > 0) {
-      const ops = order.products
-        .map((item) => {
-          const qty = Number(item.quantity) || 0;
-          if (qty <= 0) return null;
-          if (!Types.ObjectId.isValid(item.productId)) return null;
-
-          const _id = new Types.ObjectId(item.productId);
-          return {
-            updateOne: {
-              filter: { _id, stock: { $gte: qty } },
-              update: { $inc: { stock: -qty } },
-            },
-          };
-        })
+      // جهّز IDs
+      const ids = order.products
+        .map((it) => (Types.ObjectId.isValid(it.productId) ? new Types.ObjectId(it.productId) : null))
         .filter(Boolean);
+
+      // اجلب المنتجات ذات الصلة لمرة واحدة
+      const docs = await Product.find({ _id: { $in: ids } })
+        .select("_id stock colorsStock countPrices")
+        .lean();
+
+      const map = new Map(docs.map((d) => [String(d._id), d]));
+
+      const ops = [];
+
+      for (const item of order.products) {
+        const qty = Number(item.quantity) || 0;
+        if (qty <= 0) continue;
+        if (!Types.ObjectId.isValid(item.productId)) continue;
+
+        const _id = new Types.ObjectId(item.productId);
+        const doc = map.get(String(_id));
+        if (!doc) continue;
+
+        const chosenColor = (item.chosenColor || "").trim();
+        const chosenCount = (item.chosenCount || "").trim();
+
+        // هل يوجد مخزون مُعرّف للّون؟
+        const hasColorStock =
+          chosenColor &&
+          Array.isArray(doc.colorsStock) &&
+          doc.colorsStock.some(
+            (c) =>
+              String(c?.color || "").toLowerCase() === chosenColor.toLowerCase() &&
+              typeof c?.stock === "number"
+          );
+
+        // هل يوجد مخزون مُعرّف للخيار (عدد القطع)؟
+        const hasOptionStock =
+          chosenCount &&
+          Array.isArray(doc.countPrices) &&
+          doc.countPrices.some(
+            (o) =>
+              String(o?.count || "").trim() === chosenCount &&
+              typeof o?.stock === "number"
+          );
+
+        // إعداد الفلاتر والتحديثات
+        const filter = { _id, stock: { $gte: qty } };
+        const update = { $inc: { stock: -qty } };
+        const arrayFilters = [];
+
+        if (hasColorStock) {
+          filter.colorsStock = { $elemMatch: { color: chosenColor, stock: { $gte: qty } } };
+          update.$inc["colorsStock.$[c].stock"] = -qty;
+          arrayFilters.push({ "c.color": chosenColor, "c.stock": { $gte: qty } });
+        }
+
+        if (hasOptionStock) {
+          filter.countPrices = { $elemMatch: { count: chosenCount, stock: { $gte: qty } } };
+          update.$inc["countPrices.$[o].stock"] = -qty;
+          arrayFilters.push({ "o.count": chosenCount, "o.stock": { $gte: qty } });
+        }
+
+        // ملاحظة:
+        // - إذا لا يوجد مخزون تفصيلي لأي من اللون/الخيار، سنخصم من المخزون العام فقط بشرط stock>=qty.
+        // - إذا يوجد مخزون تفصيلي، الفلتر يشترط توافر الكمية في المخزون التفصيلي أيضًا، والخصم يتم على التفصيلي + العام معًا.
+
+        ops.push({
+          updateOne: {
+            filter,
+            update,
+            ...(arrayFilters.length ? { arrayFilters } : {}),
+          },
+        });
+      }
 
       if (ops.length > 0) {
         try {
