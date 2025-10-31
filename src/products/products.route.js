@@ -331,6 +331,7 @@ router.get(["/product/:id", "/:id"], async (req, res) => {
 // ====================== تحديث منتج ======================
 // ========================= backend/router (مقتطف التحديث) =========================
 // ========================= backend/routes/products.patch.js (router.patch) =========================
+// ========================= backend/routes/products.route.js (excerpt: update route) =========================
 router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) => {
   try {
     const productId = req.params.id;
@@ -457,35 +458,39 @@ router.patch("/update-product/:id", verifyToken, verifyAdmin, async (req, res) =
       updateData.image = normalizedImages;
     }
 
-    // دمج countPrices + colorsStock مع حساب stock النهائي
+    // دمج countPrices + colorsStock مع حساب stock النهائي (بدون إجبار 0 عند إرسال مصفوفات فارغة)
     let finalStockFromStructures = null;
 
-    // لو أُرسلت countPrices: حدّث + اجمع مخزونها
+    // countPrices: حدّث دائمًا إذا أُرسلت (حتى لو كانت [] لتفريغها)، واحسب فقط لو فيها عناصر
     if (countPricesArr !== undefined) {
       updateData.countPrices = countPricesArr;
-      const sumCount = countPricesArr
-        .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
-        .reduce((a, b) => a + b, 0);
-      finalStockFromStructures = (finalStockFromStructures == null) ? sumCount : finalStockFromStructures;
+      if (countPricesArr.length > 0) {
+        const sumCount = countPricesArr
+          .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
+          .reduce((a, b) => a + b, 0);
+        finalStockFromStructures = (finalStockFromStructures == null) ? sumCount : finalStockFromStructures;
+      }
     }
 
-    // لو أُرسلت colorsStock: حدّث + اجمع مخزونها
+    // colorsStock: نفس المبدأ
     if (colorsStockArr !== undefined) {
       updateData.colorsStock = colorsStockArr;
-      const sumColors = colorsStockArr
-        .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
-        .reduce((a, b) => a + b, 0);
+      if (colorsStockArr.length > 0) {
+        const sumColors = colorsStockArr
+          .map(x => (typeof x.stock === "number" && x.stock >= 0 ? x.stock : 0))
+          .reduce((a, b) => a + b, 0);
 
-      if (finalStockFromStructures == null) {
-        finalStockFromStructures = sumColors;
-      } else {
-        // إذا تم إرسال الاثنين معًا: المخزون النهائي = الحد الأدنى بين المجموعين
-        finalStockFromStructures = Math.min(finalStockFromStructures, sumColors);
+        if (finalStockFromStructures == null) {
+          finalStockFromStructures = sumColors;
+        } else {
+          // إذا تم إرسال الاثنين وبِهما عناصر: المخزون النهائي = الحد الأدنى بين المجموعين
+          finalStockFromStructures = Math.min(finalStockFromStructures, sumColors);
+        }
       }
     }
 
     // أولوية تحديد stock:
-    // 1) إن تم إرسال countPrices و/أو colorsStock ⇒ احسب حسب القاعدة
+    // 1) إن تم إرسال countPrices و/أو colorsStock وبِهما عناصر ⇒ احسب حسب القاعدة
     // 2) وإلا لو أُرسل stockNum صراحةً ⇒ استخدمه
     if (finalStockFromStructures != null) {
       updateData.stock = finalStockFromStructures;
