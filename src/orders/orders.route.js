@@ -1,6 +1,7 @@
 // ========================= backend/orders/orders.route.js =========================
 const express = require("express");
 const axios = require("axios");
+const nodemailer = require("nodemailer"); // ✅ لإرسال الإيميلات
 require("dotenv").config();
 
 const Order = require("./orders.model");
@@ -20,7 +21,7 @@ function computeShippingFee(subtotalOMR) {
 router.post("/create-checkout-session", async (req, res) => {
   const {
     products,
-    email,
+    // email,
     customerName,
     customerPhone,
     country,
@@ -83,7 +84,7 @@ router.post("/create-checkout-session", async (req, res) => {
       metadata: {
         customer_name: customerName,
         customer_phone: customerPhone,
-        email: email || "غير محدد",
+        // email: email || "غير محدد",
         country,
         wilayat,
         description: description || "لا يوجد وصف",
@@ -126,7 +127,7 @@ router.post("/create-checkout-session", async (req, res) => {
       country,
       wilayat,
       description,
-      email,
+      // email,
       status: "pending",
     });
 
@@ -253,7 +254,7 @@ router.post("/confirm-payment", async (req, res) => {
         country: "",
         wilayat: "",
         description: "",
-        email: "",
+        // email: "",
         currency: "OMR",
       });
       shouldDecrementStock = true;
@@ -358,6 +359,155 @@ router.post("/confirm-payment", async (req, res) => {
     return res
       .status(500)
       .json({ error: "Failed to confirm payment", details: error.message });
+  }
+});
+
+// ======================= إرسال إيميل لصاحب المتجر =======================
+// ======================= إرسال إيميل لصاحب المتجر =======================
+router.post("/notify-admin", async (req, res) => {
+  try {
+    const {
+      to,
+      orderId,
+      status,
+      amount,
+      customerName,
+      customerPhone,
+      country,
+      wilayat,
+      products = [],
+    } = req.body;
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      },
+    });
+
+    // صفوف المنتجات داخل الجدول
+    const productsRows = (products || [])
+      .map(
+        (p, i) => `
+          <tr>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${i + 1}</td>
+            <td style="border:1px solid #ddd;padding:8px;">${p.name || p.productId || "-"}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${p.quantity || 1}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${p.chosenSize || "-"}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${p.chosenColor || "-"}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${p.chosenCount || "-"}</td>
+            <td style="border:1px solid #ddd;padding:8px;text-align:center;">${p.price || "-"}</td>
+          </tr>
+        `
+      )
+      .join("");
+
+    const mailOptions = {
+      from: `" متجر baby7aven
+" <${process.env.SMTP_USER}>`,
+      to: to || "baby7aven.om@gmail.com",
+      subject: `فاتورة طلب جديد #${orderId || ""}`,
+      html: `
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <title>فاتورة الطلب</title>
+  </head>
+  <body style="font-family: Tahoma, Arial, sans-serif; background-color:#f5f5f5; padding:20px;">
+    <div style="max-width:700px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;border:1px solid #e0e0e0;">
+      
+      <!-- الهيدر -->
+      <div style="background:#4f46e5;color:#ffffff;padding:16px 24px;text-align:center;">
+        <h2 style="margin:0;font-size:22px;">متجر baby7aven</h2>
+        <p style="margin:4px 0 0;font-size:14px;">فاتورة طلب جديد</p>
+      </div>
+
+      <!-- معلومات عامة عن الطلب -->
+      <div style="padding:20px;">
+        <h3 style="margin-top:0;margin-bottom:12px;font-size:18px;">تفاصيل الطلب</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+          <tbody>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">رقم الطلب:</td>
+              <td style="padding:6px 0;">${orderId || "-"}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">حالة الطلب:</td>
+              <td style="padding:6px 0;">${status || "-"}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">المبلغ الكلي:</td>
+              <td style="padding:6px 0;">${amount || "-"} ر.ع</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3 style="margin-top:16px;margin-bottom:12px;font-size:18px;">بيانات العميل</h3>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+          <tbody>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">اسم العميل:</td>
+              <td style="padding:6px 0;">${customerName || "-"}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">رقم الهاتف:</td>
+              <td style="padding:6px 0;">${customerPhone || "-"}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">البلد:</td>
+              <td style="padding:6px 0;">${country || "-"}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 0;font-weight:bold;">الولاية:</td>
+              <td style="padding:6px 0;">${wilayat || "-"}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3 style="margin-top:16px;margin-bottom:12px;font-size:18px;">تفاصيل المنتجات</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#f3f4f6;">
+              <th style="border:1px solid #ddd;padding:8px;">#</th>
+              <th style="border:1px solid #ddd;padding:8px;">المنتج</th>
+              <th style="border:1px solid #ddd;padding:8px;">الكمية</th>
+              <th style="border:1px solid #ddd;padding:8px;">المقاس</th>
+              <th style="border:1px solid #ddd;padding:8px;">اللون</th>
+              <th style="border:1px solid #ddd;padding:8px;">عدد القطع</th>
+              <th style="border:1px solid #ddd;padding:8px;">السعر</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${productsRows || `
+              <tr>
+                <td colspan="7" style="border:1px solid #ddd;padding:8px;text-align:center;">
+                  لا توجد منتجات في هذا الطلب
+                </td>
+              </tr>
+            `}
+          </tbody>
+        </table>
+
+        <p style="margin-top:24px;font-size:13px;color:#555;text-align:center;">
+          شكرًا لتعاملك مع <strong> مبادر</strong> 🌿
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.json({ message: "Admin email sent successfully" });
+  } catch (error) {
+    console.error("Error sending admin email:", error);
+    return res
+      .status(500)
+      .json({ error: "Failed to send admin email", details: error.message });
   }
 });
 

@@ -25,7 +25,7 @@ const OrderSchema = new mongoose.Schema(
     country: { type: String, required: true },
     wilayat: { type: String, required: true },
     description: { type: String },
-    email: { type: String, required: true },
+    // email: { type: String, required: true },
     status: {
       type: String,
       required: true,
