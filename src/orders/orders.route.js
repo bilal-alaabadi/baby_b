@@ -406,7 +406,7 @@ router.post("/notify-admin", async (req, res) => {
     const mailOptions = {
       from: `" متجر baby7aven
 " <${process.env.SMTP_USER}>`,
-      to: to || "baby7aven.om@gmail.com",
+      to: to || "mdbilalnizwa@gmail.com",
       subject: `فاتورة طلب جديد #${orderId || ""}`,
       html: `
 <!DOCTYPE html>
