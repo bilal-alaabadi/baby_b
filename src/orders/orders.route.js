@@ -42,7 +42,7 @@ router.post("/create-checkout-session", async (req, res) => {
       .json({ error: "Thawani keys not configured on the server" });
   }
 
-  const CHECKOUT_HOST = "https://checkout.thawani.om";
+  const CHECKOUT_HOST = "https://uatcheckout.thawani.om";
 
   if (!Array.isArray(products) || products.length === 0) {
     return res.status(400).json({ error: "Invalid or empty products array" });
